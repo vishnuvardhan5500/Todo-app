@@ -667,15 +667,33 @@
     }
     refreshNotifBtn();
   });
+  const NOTIFY_REPEAT_MS = 60 * 60 * 1000;
+
+  function cleanupOldCompleted() {
+    const cutoff = addDays(todayStr(), -7);
+    const before = tasks.length;
+    tasks = tasks.filter(t => !(t.completed && t.completedAt && t.completedAt.slice(0, 10) <= cutoff));
+    if (tasks.length !== before) {
+      render();
+      schedulePush();
+    }
+  }
+
   function checkDueNotifications() {
     if (!notifsOn || !('Notification' in window) || Notification.permission !== 'granted') return;
     const today = todayStr();
+    const now = Date.now();
+    let notified = false;
     tasks.forEach(t => {
-      if (!t.completed && t.dueDate === today && t.notifiedDate !== today) {
+      const last = t.notifiedAt ? new Date(t.notifiedAt).getTime() : 0;
+      if (!t.completed && t.dueDate === today && (now - last) >= NOTIFY_REPEAT_MS) {
         new Notification('Due today: ' + t.text, { body: t.tag ? 'Tag: ' + t.tag : 'From Ledger' });
-        t.notifiedDate = today;
+        t.notifiedAt = new Date(now).toISOString();
+        t.updatedAt = new Date(now).toISOString();
+        notified = true;
       }
     });
+    if (notified) schedulePush();
   }
 
   // ---------- rendering ----------
@@ -900,7 +918,7 @@
       notes: opts.notes || '',
       recurring: opts.recurring || 'none',
       completed: false,
-      notifiedDate: '',
+      notifiedAt: '',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -924,7 +942,7 @@
         notes: t.notes,
         recurring: t.recurring,
         completed: false,
-        notifiedDate: '',
+        notifiedAt: '',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });
@@ -1232,12 +1250,14 @@
   render();
 
   if (gistId && gistToken) {
-    doSync().then(checkDueNotifications);
+    doSync().then(() => { checkDueNotifications(); cleanupOldCompleted(); });
   } else {
     checkDueNotifications();
+    cleanupOldCompleted();
   }
 
   setInterval(checkDueNotifications, 60 * 1000);
+  setInterval(cleanupOldCompleted, 60 * 60 * 1000);
   setInterval(() => { if (gistId && gistToken) doSync(); }, AUTO_SYNC_MS);
 
   // ---------- PWA install + service worker ----------
